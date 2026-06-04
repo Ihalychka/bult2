@@ -1,0 +1,116 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        run: |
+          mkdir -p gradle/wrapper
+          curl -sL "https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar" -o gradle/wrapper/gradle-wrapper.jar
+          chmod +x gradlew
+          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' > gradle/wrapper/gradle-wrapper.properties
+
+      - name: Create Gradle files
+        run: |
+          printf '%s\n' 'plugins {' '    id "com.android.application" version "8.2.0" apply false' '}' > build.gradle
+          printf '%s\n' 'org.gradle.jvmargs=-Xmx2048m' 'android.useAndroidX=true' 'android.enableJetifier=true' > gradle.properties
+          printf '%s\n' 'pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }' 'dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }' 'rootProject.name = "MKX"' 'include ":app"' > settings.gradle
+          mkdir -p app
+          printf '%s\n' 'plugins { id "com.android.application" }' 'android { compileSdk 34; defaultConfig { applicationId "info.drtmo.mkx"; minSdk 21; targetSdk 34; versionCode 1; versionName "1.0" }; compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 } }' 'dependencies { implementation "androidx.appcompat:appcompat:1.6.1" }' > app/build.gradle
+
+      - name: Create app source files
+        env:
+          MANIFEST: |
+            <?xml version="1.0" encoding="utf-8"?>
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="info.drtmo.mkx">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <application android:allowBackup="true" android:label="MKX Shkaly" android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
+                  <intent-filter>
+                    <action android:name="android.intent.action.MAIN" />
+                    <category android:name="android.intent.category.LAUNCHER" />
+                  </intent-filter>
+                </activity>
+              </application>
+            </manifest>
+          LAYOUT: |
+            <?xml version="1.0" encoding="utf-8"?>
+            <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                android:layout_width="match_parent" android:layout_height="match_parent"
+                android:orientation="vertical">
+              <WebView android:id="@+id/webView"
+                  android:layout_width="match_parent" android:layout_height="match_parent" />
+            </LinearLayout>
+          JAVA_CODE: |
+            package info.drtmo.mkx;
+            import android.annotation.SuppressLint;
+            import android.os.Bundle;
+            import android.webkit.WebResourceRequest;
+            import android.webkit.WebSettings;
+            import android.webkit.WebView;
+            import android.webkit.WebViewClient;
+            import androidx.appcompat.app.AppCompatActivity;
+            public class MainActivity extends AppCompatActivity {
+                private WebView webView;
+                @SuppressLint("SetJavaScriptEnabled")
+                @Override
+                protected void onCreate(Bundle savedInstanceState) {
+                    super.onCreate(savedInstanceState);
+                    setContentView(R.layout.activity_main);
+                    webView = findViewById(R.id.webView);
+                    WebSettings s = webView.getSettings();
+                    s.setJavaScriptEnabled(true);
+                    s.setDomStorageEnabled(true);
+                    s.setLoadWithOverviewMode(true);
+                    s.setUseWideViewPort(true);
+                    webView.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
+                            view.loadUrl(req.getUrl().toString());
+                            return true;
+                        }
+                    });
+                    webView.loadUrl("https://mkx.drtmo.info");
+                }
+                @Override
+                public void onBackPressed() {
+                    if (webView.canGoBack()) webView.goBack();
+                    else super.onBackPressed();
+                }
+            }
+        run: |
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/java/info/drtmo/mkx
+          echo "$MANIFEST" > app/src/main/AndroidManifest.xml
+          echo "$LAYOUT"   > app/src/main/res/layout/activity_main.xml
+          echo "$JAVA_CODE" > app/src/main/java/info/drtmo/mkx/MainActivity.java
+
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: MKX-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
